@@ -1,1 +1,47 @@
-
+name: Build APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - name: Locate project (zip in repo root wins, otherwise repo itself)
+        id: proj
+        run: |
+          ZIP=$(ls *.zip 2>/dev/null | head -n1 || true)
+          if [ -n "$ZIP" ]; then
+            mkdir -p /tmp/src && unzip -q -o "$ZIP" -d /tmp/src
+            S=$(find /tmp/src -name settings.gradle.kts | head -n1)
+            [ -n "$S" ] || { echo "settings.gradle.kts not found inside $ZIP"; exit 1; }
+            DIR=$(dirname "$S")
+          else
+            DIR="$GITHUB_WORKSPACE"
+          fi
+          echo "Building from: $DIR"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+      - name: Build debug APK
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ikhlas-debug-apk
+          path: ${{ steps.proj.outputs.dir }}/app/build/outputs/apk/debug/*.apk
+      - name: Publish APK to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=$(find "${{ steps.proj.outputs.dir }}/app/build/outputs/apk/debug" -name '*.apk' | head -n1)
+          cp "$APK" ikhlas.apk
+          gh release create "build-${{ github.run_number }}" ikhlas.apk --title "Build ${{ github.run_number }}" --notes "APK جاهز للتثبيت"
